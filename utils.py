@@ -1,3 +1,8 @@
+"""
+These utils were adapted from
+https://github.com/joycex99/tiny-yolo-keras/blob/master/utils.py
+"""
+
 import numpy as np
 import cv2
 
