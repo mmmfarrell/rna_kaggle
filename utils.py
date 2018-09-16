@@ -5,6 +5,10 @@ https://github.com/joycex99/tiny-yolo-keras/blob/master/utils.py
 
 import numpy as np
 import cv2
+import csv
+import pydicom
+
+import keras
 
 
 class BoundBox:
@@ -119,3 +123,96 @@ def sigmoid(x):
 
 def softmax(x):
     return np.exp(x) / np.sum(np.exp(x), axis=0)
+
+def parse_annotations(train_annotations_file):
+    annotations = {}
+
+    with open(train_annotations_file, 'r') as f:
+        reader = csv.reader(f)
+
+        header = next(reader)
+
+        for row in reader:
+            patient_id = row[0]
+
+            if patient_id not in annotations:
+                annotations[patient_id] = {}
+                annotations[patient_id]['file'] = patient_id + '.dcm'
+                annotations[patient_id]['width'] = 1024
+                annotations[patient_id]['height'] = 1024
+                annotations[patient_id]['object'] = []
+
+            if row[1] != '':
+                new_object = {}
+                new_object['name'] = 1
+                new_object['xmin'] = row[1]
+                new_object['ymin'] = row[2]
+                new_object['xmax'] = row[1] + row[3]
+                new_object['ymin'] = row[2] + row[4]
+                annotations[patient_id]['object'].append(new_object)
+
+    return annotations
+
+class DataGenerator(keras.utils.Sequence):
+    'Generates data for Keras'
+    def __init__(self, annotations, train_img_dir, batch_size=32, shuffle=False):
+        'Initialization'
+        self.annotations = annotations
+        self.annotation_keys = list(sorted(annotations.keys()))
+        self.train_img_dir = train_img_dir
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.on_epoch_end()
+
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        return int(np.floor(len(self.annotations) / self.batch_size))
+
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        # Generate indexes of the batch
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+
+        # Find list of IDs
+        list_annotations_temp = [self.annotations[self.annotation_keys[k]]
+                for k in indexes]
+
+        # Generate data
+        X, y = self.__data_generation(list_annotations_temp)
+
+        return X, y
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange(len(self.annotations))
+
+        # TODO implement the shuffle
+        # if self.shuffle == True:
+            # np.random.shuffle(self.indexes)
+
+    def __data_generation(self, list_annotations_temp):
+        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        # Initialization
+        X = np.empty((self.batch_size, 416, 416, 3))
+        y = np.empty((self.batch_size, 13, 13, 5, 6))
+
+        # Generate data
+        for i, annotation in enumerate(list_annotations_temp):
+            image_file_name = self.train_img_dir + annotation['file']
+            dicom_image = pydicom.read_file(image_file_name) # read dicom image from filepath 
+            image = dicom_image.pixel_array # get image array
+            stacked_img = np.stack((image,)*3, -1)
+
+            print(image.shape)
+            print(stacked_img.shape)
+            print(image)
+            cv2.imshow("ex", stacked_img)
+            cv2.waitKey(0)
+
+            # Store sample
+            X[i,] = np.load('data/' + ID + '.npy')
+
+            # Store class
+            y[i] = self.labels[ID]
+
+        return X, keras.utils.to_categorical(y, num_classes=self.n_classes)
