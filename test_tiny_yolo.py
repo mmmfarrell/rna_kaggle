@@ -59,4 +59,11 @@ if __name__ == '__main__':
 
     data_gen = DataGenerator(annotations, train_img_dir)
 
-    print(data_gen[0])
+    x_batch, y = data_gen[30]
+    print("batch", x_batch.shape)
+    print("y batch", y.shape)
+
+    for i in range(32):
+        img = x_batch[i,]
+        cv2.imshow("img", img)
+        cv2.waitKey(0)

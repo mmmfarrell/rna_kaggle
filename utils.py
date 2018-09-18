@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import csv
 import pydicom
+import copy
 
 import keras
 
@@ -114,7 +115,8 @@ def interpret_netout(image, netout, config):
 
 
             cv2.rectangle(output_image, (xmin,ymin), (xmax,ymax), (0,0,0), 2)
-            cv2.putText(output_image, LABELS[max_indx], (xmin, ymin - 12), 0, 1e-3 * image.shape[0], (0,255,0), 2)
+            cv2.putText(output_image, LABELS[max_indx], (xmin, ymin - 12), 0, 
+                    1e-3 * image.shape[0], (0,255,0), 2)
 
     return output_image
 
@@ -145,13 +147,82 @@ def parse_annotations(train_annotations_file):
             if row[1] != '':
                 new_object = {}
                 new_object['name'] = 1
-                new_object['xmin'] = row[1]
-                new_object['ymin'] = row[2]
-                new_object['xmax'] = row[1] + row[3]
-                new_object['ymin'] = row[2] + row[4]
+                new_object['xmin'] = float(row[1])
+                new_object['ymin'] = float(row[2])
+                new_object['xmax'] = float(row[1]) + float(row[3])
+                new_object['ymax'] = float(row[2]) + float(row[4])
                 annotations[patient_id]['object'].append(new_object)
 
     return annotations
+
+def aug_img(train_instance, train_img_dir):
+    NORM_H = 416
+    NORM_W = 416
+    GRID_H = 13
+    GRID_W = 13
+    BOX = 5
+
+    image_file_name = train_img_dir + train_instance['file']
+    dicom_image = pydicom.read_file(image_file_name) 
+    image = dicom_image.pixel_array 
+
+    # # Make image have 3 channels and normalize
+    img = np.stack((image,)*3, -1)
+    # image = cv2.resize(image, (416, 416))
+    # image = image / 255.
+    all_obj = copy.deepcopy(train_instance['object'])
+
+    # path = train_instance['filename']
+    # all_obj = copy.deepcopy(train_instance['object'][:])
+    # img = cv2.imread(img_dir + path + ".JPEG")
+    h, w, c = img.shape
+
+    # scale the image
+    scale = np.random.uniform() / 10. + 1.
+    img = cv2.resize(img, (0,0), fx = scale, fy = scale)
+
+    # translate the image
+    max_offx = (scale-1.) * w
+    max_offy = (scale-1.) * h
+    offx = int(np.random.uniform() * max_offx)
+    offy = int(np.random.uniform() * max_offy)
+    img = img[offy : (offy + h), offx : (offx + w)]
+
+    # # flip the image
+    # flip = np.random.binomial(1, .5)
+    # if flip > 0.5: img = cv2.flip(img, 1)
+
+    # re-color
+    # t  = [np.random.uniform()]
+    # t += [np.random.uniform()]
+    # t += [np.random.uniform()]
+    # t = np.array(t)
+
+    # img = img * (1 + t)
+    img = img / (255. * 2.)
+
+    # resize the image to standard size
+    img = cv2.resize(img, (NORM_H, NORM_W))
+    img = img[:,:,::-1]
+
+    # fix object's position and size
+    for obj in all_obj:
+        for attr in ['xmin', 'xmax']:
+            obj[attr] = int(obj[attr] * scale - offx)
+            obj[attr] = int(obj[attr] * float(NORM_W) / w)
+            obj[attr] = max(min(obj[attr], NORM_W), 0)
+
+        for attr in ['ymin', 'ymax']:
+            obj[attr] = int(obj[attr] * scale - offy)
+            obj[attr] = int(obj[attr] * float(NORM_H) / h)
+            obj[attr] = max(min(obj[attr], NORM_H), 0)
+
+        # if flip > 0.5:
+            # xmin = obj['xmin']
+            # obj['xmin'] = NORM_W - obj['xmax']
+            # obj['xmax'] = NORM_W - xmin
+
+    return img, all_obj
 
 class DataGenerator(keras.utils.Sequence):
     'Generates data for Keras'
@@ -191,28 +262,69 @@ class DataGenerator(keras.utils.Sequence):
             # np.random.shuffle(self.indexes)
 
     def __data_generation(self, list_annotations_temp):
-        'Generates data containing batch_size samples' # X : (n_samples, *dim, n_channels)
+        'Generates data containing batch_size samples'
+        NORM_H = 416
+        NORM_W = 416
+        GRID_H = 13
+        GRID_W = 13
+        BOX = 5
+
         # Initialization
         X = np.empty((self.batch_size, 416, 416, 3))
         y = np.empty((self.batch_size, 13, 13, 5, 6))
 
         # Generate data
         for i, annotation in enumerate(list_annotations_temp):
-            image_file_name = self.train_img_dir + annotation['file']
-            dicom_image = pydicom.read_file(image_file_name) # read dicom image from filepath 
-            image = dicom_image.pixel_array # get image array
-            stacked_img = np.stack((image,)*3, -1)
+            # print("orig anno", annotation)
+            img, all_obj = aug_img(annotation, self.train_img_dir)
+            # min_point = (all_obj[0]['xmin'], all_obj[0]['ymin'])
+            # max_point = (all_obj[0]['xmax'], all_obj[0]['ymax'])
+            # img = cv2.rectangle(img.copy(), min_point, max_point, (255, 0, 0))
+            # print("aug objs", all_obj)
 
-            print(image.shape)
-            print(stacked_img.shape)
-            print(image)
-            cv2.imshow("ex", stacked_img)
-            cv2.waitKey(0)
+            # image_file_name = self.train_img_dir + annotation['file']
+            # dicom_image = pydicom.read_file(image_file_name) 
+            # image = dicom_image.pixel_array 
+
+            # Make image have 3 channels and normalize
+            # image = np.stack((image,)*3, -1)
+            # image = cv2.resize(image, (416, 416))
+            # image = image / 255.
+            # min_point = (int(annotation['object'][0]['xmin']),
+                    # int(annotation['object'][0]['ymin']))
+            # max_point = (int(annotation['object'][0]['xmax']),
+                    # int(annotation['object'][0]['ymax']))
+            # print("min point", min_point)
+            # print("max point", max_point)
+            # image = cv2.rectangle(image.copy(), min_point, max_point, (255, 0, 0))
+            # print("image shape", image.shape)
+            # cv2.imshow("orig img", image)
+            # TODO should I make is from -1. to 1.?
 
             # Store sample
-            X[i,] = np.load('data/' + ID + '.npy')
+            # cv2.imshow("img", img)
+            # cv2.waitKey(0)
+            X[i,] = img
 
-            # Store class
-            y[i] = self.labels[ID]
+            # construct output from object's position and size
+            for obj in all_obj:
+                box = []
+                center_x = .5*(obj['xmin'] + obj['xmax']) #xmin, xmax
+                center_x = center_x / (float(NORM_W) / GRID_W)
+                center_y = .5*(obj['ymin'] + obj['ymax']) #ymin, ymax
+                center_y = center_y / (float(NORM_H) / GRID_H)
 
-        return X, keras.utils.to_categorical(y, num_classes=self.n_classes)
+                grid_x = int(np.floor(center_x))
+                grid_y = int(np.floor(center_y))
+
+                if grid_x < GRID_W and grid_y < GRID_H:
+                    # obj_idx = labels.index(obj['name'])
+                    obj_idx = 0
+                    box = [obj['xmin'], obj['ymin'], obj['xmax'], obj['ymax']]
+
+                    y[i, grid_y, grid_x, :, 0:4] = BOX * [box]
+                    y[i, grid_y, grid_x, :, 4  ] = BOX * [1.]
+                    # y[i, grid_y, grid_x, :, 5: ] = BOX * [[0.]*CLASS]
+                    y[i, grid_y, grid_x, :, 5+obj_idx] = 1.0
+
+        return X, y
